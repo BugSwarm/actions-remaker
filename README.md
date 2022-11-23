@@ -10,6 +10,7 @@ Short description here
 * Python 3.8
 * Python3-virtualenv
 * [Docker](https://docs.docker.com/engine/install/ubuntu/)
+* [GitHub personal access token (classic) with repo scope](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token)
 
 ### Installation
 
@@ -25,7 +26,12 @@ Short description here
 ~/actions-remaker$ . venv/bin/activate
 ```
 
-3. Install dependencies
+3. Add personal access token to credentials.py file
+   - Open `bugswarm/common/credentials.py`
+   - Replace `GITHUB_TOKENS = []` with `GITHUB_TOKENS = ['my_personal_token']`
+
+
+4. Install dependencies
 ```shell
 (venv) ~/actions-remaker$ pip install -e .
 ```
