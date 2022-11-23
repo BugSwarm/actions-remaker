@@ -1,8 +1,9 @@
 # ActionsRemaker
-Short description here
+**A tool to reproduce workflow runs on GitHub Actions**
+
 ![ActionsRemaker](./figures/actions-remaker.png)
 
-## Setting up ActionsRemaker
+## Setting up
 
 ### Requirements
 
@@ -14,34 +15,37 @@ Short description here
 
 ### Installation
 
-1. Clone the repository:
-```shell
-~$ git clone https://github.com/BugSwarm/actions-remaker
-~$ cd actions-remaker
-```
+1. Clone the repository
+    ```shell
+    ~$ git clone https://github.com/BugSwarm/actions-remaker
+    ~$ cd actions-remaker
+    ```
 
-2. Create and activate a Python virtual environment:
-```shell
-~/actions-remaker$ virtualenv -p python3.8 venv
-~/actions-remaker$ . venv/bin/activate
-```
+2. Create and activate a Python virtual environment
+    ```shell
+    ~/actions-remaker$ virtualenv -p python3.8 venv
+    ~/actions-remaker$ . venv/bin/activate
+    ```
 
-3. Add personal access token to credentials.py file
+3. Add personal access token to credentials
    - Open `bugswarm/common/credentials.py`
    - Replace `GITHUB_TOKENS = []` with `GITHUB_TOKENS = ['my_personal_token']`
 
 
 4. Install dependencies
-```shell
-(venv) ~/actions-remaker$ pip install -e .
-```
+    ```shell
+    (venv) ~/actions-remaker$ pip install -e .
+    ```
 
-### Usage
-- Reproduce a single run
+## Usage
+
+### Commands
+
+- Reproduce a single run with job ID
     ```shell
     run.sh -r <repo-slug> -j <job-id>
     ```
-- Reproduce a failed/passed pair
+- Reproduce a fail-pass pair
     ```shell
     run.sh -r <repo-slug> -f <failed-job-id> -p <passed-job-id>
     ```
