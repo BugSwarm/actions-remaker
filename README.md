@@ -55,7 +55,7 @@ Short description here
     ```shell
     (venv) ~/actions-remaker$ cat reproducer/output/tasks/task/Grasscutters/Grasscutter/-1-3344953329-3351485580/9179386809-9179402125/9179402125.log
     ```
-    Check newly generated Docker image:
+    Check newly generated Docker images:
     ```shell
     (venv) ~/actions-remaker$ docker image ls
     REPOSITORY                         TAG                                       IMAGE ID       CREATED              SIZE
