@@ -41,6 +41,10 @@
 
 ### Commands
 
+- Get job ID from GitHub's website
+    ```shell
+    get_id.sh <github-url>
+    ```
 - Reproduce a single run with job ID
     ```shell
     run.sh -r <repo-slug> -j <job-id>
@@ -54,6 +58,14 @@
 ### Examples
 
 1. Reproduce a [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144) and a [passed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3351485580/jobs/5552966102).
+    Get failed job ID and passed job ID:
+    ``` shell
+    (venv) ~/actions-remaker$ bash get_id.sh https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329
+    ```
+    ``` shell
+    (venv) ~/actions-remaker$ bash get_id.sh https://github.com/Grasscutters/Grasscutter/actions/runs/3351485580
+    ```
+    Reproduce failed and passed jobs:
     ``` shell
     (venv) ~/actions-remaker$ bash run.sh -r Grasscutters/Grasscutter -f 9179386809 -p 9179402125
     ```
@@ -72,7 +84,7 @@
     job_id                             9179402125                                c9421d72ee0e   About a minute ago   11.6GB
     job_id                             9179386809                                086391da557b   About a minute ago   11.6GB
     ```
-3. Reproduce just the [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144)
+2. Reproduce just the [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144)
     ``` shell
     (venv) ~/actions-remaker$ bash run.sh -r Grasscutters/Grasscutter -j 9179386809
     ```
