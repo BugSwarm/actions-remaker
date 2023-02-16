@@ -57,7 +57,7 @@
 
 ### Examples
 
-1. Reproduce a [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144) and a [passed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3351485580/jobs/5552966102).
+1. Reproduce a [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144) [(original log)](reproducer/intermediates/orig_logs/9179386809-orig.log) and a [passed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3351485580/jobs/5552966102) [(original log)](reproducer/intermediates/orig_logs/9179402125-orig.log).
 
     Get failed job ID and passed job ID:
     ``` shell
