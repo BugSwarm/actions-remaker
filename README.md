@@ -85,7 +85,7 @@
     job_id                             9179402125                                c9421d72ee0e   About a minute ago   11.6GB
     job_id                             9179386809                                086391da557b   About a minute ago   11.6GB
     ```
-2. Reproduce just the [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144)
+2. Reproduce just the [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144) [(original log)](reproducer/intermediates/orig_logs/9179386809-orig.log).
     ``` shell
     (venv) ~/actions-remaker$ bash run.sh -r Grasscutters/Grasscutter -j 9179386809
     ```
