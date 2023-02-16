@@ -58,6 +58,7 @@
 ### Examples
 
 1. Reproduce a [failed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329/jobs/5552953144) and a [passed job](https://github.com/Grasscutters/Grasscutter/actions/runs/3351485580/jobs/5552966102).
+
     Get failed job ID and passed job ID:
     ``` shell
     (venv) ~/actions-remaker$ bash get_id.sh https://github.com/Grasscutters/Grasscutter/actions/runs/3344953329
