@@ -44,10 +44,10 @@ fi
 
 
 if [ $STATUS -ne 0 ]; then
-  rm -rf intermediates
+  rm -rf intermediates/project_repos intermediates/workspace
   exit 1
 else
-  rm -rf intermediates
+  rm -rf intermediates/project_repos intermediates/workspace
 fi
 
 
