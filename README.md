@@ -7,6 +7,7 @@
 
 ### Requirements
 
+* x86-64 architecture
 * Ubuntu 18.04 or higher
 * Python 3.8
 * Python3-virtualenv
