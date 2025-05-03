@@ -1,5 +1,4 @@
 import re
-import shlex
 
 from bugswarm.common import log
 from reproducer.model.step import Step
@@ -7,12 +6,31 @@ from reproducer.model.step import Step
 from .github_builder import GitHubBuilder
 
 
-def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, setup=True):
-    # path to the source code
+def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, setup=True, outputs=None):
+    # setup is True if we call this function in GitHubBuilder, False if we call this function in predefined_action
+    # We call this function in predefined_action when we have a composite action
     if setup:
         lines = [
             '#!/usr/bin/env bash',
             'export GITHUB_WORKSPACE={}'.format(github_builder.build_path),
+            '',
+            # Pre-job script
+            # https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/running-scripts-before-or-after-a-job
+            'if [[ ! -z "$ACTIONS_RUNNER_HOOK_JOB_STARTED" ]]; then',
+            '   echo "A job started hook has been configured by the self-hosted runner administrator"',
+            '   echo "##[group]Run \'$ACTIONS_RUNNER_HOOK_JOB_STARTED\'"',
+            '   echo "##[endgroup]"',
+            '   bash -e $ACTIONS_RUNNER_HOOK_JOB_STARTED {} {}'
+            .format(github_builder.job.job_id, github_builder.job.f_or_p),
+            '   EXIT_CODE=$?',
+            '   if [[ $EXIT_CODE != 0 ]]; then',
+            '       echo "" && echo "##[error]Process completed with exit code $EXIT_CODE."',
+            '       exit $EXIT_CODE',
+            '   fi',
+            '   set -o allexport',
+            '   source /etc/reproducer-environment',
+            '   set +o allexport',
+            'fi',
             '',
             'set -o allexport',
             'source /etc/environment',
@@ -26,20 +44,23 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
             '',
             # Analyzer needs this header to get OS.
             'echo "##[group]Operating System"',
-            'cat /etc/lsb-release | grep -oP \'(?<=DISTRIB_ID=).*\'',
-            'cat /etc/lsb-release | grep -oP \'(?<=DISTRIB_RELEASE=).*\'',
+            'echo "Ubuntu"',  # We only support Ubuntu runs-on
+            'echo "{}"'.format('Unknown' if not github_builder.job.runs_on else github_builder.job.runs_on[7:]),
             'echo "LTS"',
             'echo "##[endgroup]"',
             '',
             # Predefined actions need this directory.
             'mkdir -p /home/github/workflow/',
             '',
-            'cp -a /home/github/{}/steps/. ${{GITHUB_WORKSPACE}}/'.format(github_builder.job.job_id),
             'cp /home/github/{}/event.json /home/github/workflow/event.json'.format(github_builder.job.job_id),
             'echo -n > /home/github/workflow/envs.txt',
             'echo -n > /home/github/workflow/paths.txt',
+            'echo -n > /home/github/workflow/output.txt',
+            'echo -n > /home/github/workflow/state.txt',
             '',
             'CURRENT_ENV=()',
+            'LAST_JOB_NAME=UNKNOWN',
+            'declare -gA STEP_OUTPUTS_ENV_MAP',
         ]
     else:
         lines = [
@@ -51,10 +72,13 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
             '',
             'cd ${GITHUB_WORKSPACE}',
             'CURRENT_ENV=()',
+            'LAST_JOB_NAME=UNKNOWN',
+            'declare -gA STEP_OUTPUTS_ENV_MAP',
         ]
 
     lines += [
         'update_current_env() {',
+        '  LAST_JOB_NAME=$1',
         '  CURRENT_ENV=()',
         '  unset CURRENT_ENV_MAP',
         '  declare -gA CURRENT_ENV_MAP',
@@ -96,20 +120,70 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
         '      elif [[ "$line" =~ $regex2 ]]; then',
         '        CURRENT_ENV_MAP["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"',
         '      fi',
-
         '    done < /home/github/workflow/envs.txt',
         '',
-
-        # Set CURRENT_ENV from ENV array
-        '    for key in "${!CURRENT_ENV_MAP[@]}"; do',
-        '        val="${CURRENT_ENV_MAP["$key"]}"',
-        '        CURRENT_ENV+=("${key}=${val}")',
-        '    done',
-
         '  else',
         # We don't have envs.txt file, create one
         '    echo -n "" > /home/github/workflow/envs.txt',
         '  fi',
+        '',
+        '  if [ -f /home/github/workflow/output.txt ]; then',
+        # Use bash to convert DELIMITER list to env list
+        '    local KEY=""',
+        '    local VALUE=""',
+        '    local DELIMITER=""',
+        # Define regex
+        '    local regex="(.*)<<(.*)"',
+        '    local regex2="(.*)=(.*)"',
+        '',
+        '    while read line; do',
+
+        # If the line is var_name<<DELIMITER
+        '      if [[ "$KEY" = "" && "$line" =~ $regex ]]; then',
+        # Save var_name to KEY
+        '        KEY="${BASH_REMATCH[1]^^}"',
+        '        KEY=${KEY//-/_}',  # Replace - with _
+        '        DELIMITER="${BASH_REMATCH[2]}"',
+
+        # If the line is DELIMITER
+        '      elif [[ "$KEY" != "" && "$line" = "$DELIMITER" ]]; then',
+        # Add KEY VALUE pairs to CURRENT_ENV
+        '        STEP_OUTPUTS_ENV_MAP["_CONTEXT_STEPS_"$LAST_JOB_NAME"_OUTPUTS_$KEY"]="${VALUE}"',
+        # Reset KEY and VALUE
+        '        KEY=""',
+        '        VALUE=""',
+        '        DELIMITER=""',
+
+        '      elif [[ "$KEY" != "" ]]; then',
+        # If VALUE is empty, set it to current line. Otherwise, append \n + line to VALUE
+        '        if [[ $VALUE = "" ]]; then',
+        '          VALUE="$line"',
+        '        else',
+        '          VALUE="$VALUE\n$line"',
+        '        fi',
+
+        # The line is "var_name=value"; set the corresponding variable
+        '      elif [[ "$line" =~ $regex2 ]]; then',
+        '        KEY="${BASH_REMATCH[1]^^}"',
+        '        KEY=${KEY//-/_}',  # Replace - with _
+        '        VALUE="${BASH_REMATCH[2]}"',
+        '        STEP_OUTPUTS_ENV_MAP["_CONTEXT_STEPS_"$LAST_JOB_NAME"_OUTPUTS_$KEY"]="${VALUE}"',
+        '        KEY=""',
+        '        VALUE=""',
+        '      fi',
+        '    done < /home/github/workflow/output.txt',
+        '    echo -n "" > /home/github/workflow/output.txt',
+        '',
+        '  else',
+        # We don't have envs.txt file, create one
+        '    echo -n "" > /home/github/workflow/output.txt',
+        '  fi',
+        '',
+        # Set CURRENT_ENV from ENV array
+        '  for key in "${!CURRENT_ENV_MAP[@]}"; do',
+        '    val="${CURRENT_ENV_MAP["$key"]}"',
+        '    CURRENT_ENV+=("${key}=${val}")',
+        '  done',
         '}',
     ]
 
@@ -121,7 +195,8 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
             # TODO: Fix spacing
             lines += [
                 '',
-                'update_current_env',
+                'update_current_env "$LAST_JOB_NAME"',
+                'LAST_JOB_NAME="{}"'.format(re.sub(r'\W', '_', str(s.step.get('id', 'unknown')).upper())),
                 'if [ -f /home/github/workflow/paths.txt ]; then',
                 # Convert lines in paths.txt into $PATH
                 '   while read NEW_PATH ',
@@ -130,22 +205,30 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
                 '   done <<< "$(cat /home/github/workflow/paths.txt)"',
                 'else',
                 # We don't have paths file, create one
-                '  echo -n \'\' > /home/github/workflow/paths.txt',
+                '  echo -n "" > /home/github/workflow/paths.txt',
                 'fi',
                 '',
                 'if [ ! -f /home/github/workflow/event.json ]; then',
-                '  echo -n \'{}\' > /home/github/workflow/event.json',
+                '  echo -n "{}" > /home/github/workflow/event.json',
                 'fi',
                 ''
             ]
 
-            filepath = '${GITHUB_WORKSPACE}/' + s.filename
+            filepath = '{}/{}'.format(github_builder.steps_dir, s.filename)
 
             # Need indirection so that environment variables are taken into account
             lines += [
                 'STEP_CONDITION=' + resolve_exprs(s.envs, s.step_if),
                 'if [[ "$STEP_CONDITION" = "true" ]]; then',
                 '',
+                # Run script when step started
+                'if [[ ! -z "$ACTIONS_RUNNER_HOOK_STEP_STARTED" ]]; then',
+                run_with_envs(s.envs, 'bash -e $ACTIONS_RUNNER_HOOK_STEP_STARTED'),
+                '   set -o allexport',
+                '   source /etc/reproducer-environment',
+                '   set +o allexport',
+                'fi',
+                ''
             ]
 
             lines.append('echo {}'.format('"##[group]"{}'.format(s.name)))
@@ -158,7 +241,15 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
                 lines += [
                     'echo ' + s.setup_cmd + ' > ' + filepath,
                     'chmod u+x ' + filepath,
-                    run_with_envs(s.envs, s.exec_template.format(filepath))
+                    run_with_envs(s.envs, s.exec_template.format(filepath)),
+                    # Run script when pre-step completed
+                    'if [[ ! -z "$ACTIONS_RUNNER_HOOK_PRE_STEP_COMPLETED" ]]; then',
+                    run_with_envs(s.envs, 'bash -e $ACTIONS_RUNNER_HOOK_PRE_STEP_COMPLETED'),
+                    '   set -o allexport',
+                    '   source /etc/reproducer-environment',
+                    '   set +o allexport',
+                    'fi',
+                    ''
                 ]
 
             lines += [
@@ -204,8 +295,49 @@ def generate(github_builder: GitHubBuilder, steps: 'list[Step]', output_path, se
 
             lines += [
                 'fi',  # if [[ $EXIT_CODE != 0 ]]
+                '',
+                # Run script when step completed
+                'if [[ ! -z "$ACTIONS_RUNNER_HOOK_STEP_COMPLETED" ]]; then',
+                run_with_envs(s.envs, 'bash -e $ACTIONS_RUNNER_HOOK_STEP_COMPLETED'),
+                '   set -o allexport',
+                '   source /etc/reproducer-environment',
+                '   set +o allexport',
+                'fi',
+                '',
                 'fi',  # if [[ "$STEP_CONDITION" = "true" ]]
             ]
+
+    # Handle composite actions' output
+    if isinstance(outputs, dict):
+        for key, value in outputs.items():
+            lines += [
+                'echo "{}<<delimiter" >> /home/github/workflow/output.txt'.format(key),
+                'echo "{}" >> /home/github/workflow/output.txt'.format(value),
+                'echo "delimiter" >> /home/github/workflow/output.txt'
+            ]
+
+    if setup:
+        lines += [
+            '',
+            # Post-job script
+            # https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/running-scripts-before-or-after-a-job
+            'if [[ ! -z "$ACTIONS_RUNNER_HOOK_JOB_COMPLETED" ]]; then',
+            '   echo "A job completed hook has been configured by the self-hosted runner administrator"',
+            '   echo "##[group]Run \'$ACTIONS_RUNNER_HOOK_JOB_COMPLETED\'"',
+            '   echo "##[endgroup]"',
+            '   bash -e $ACTIONS_RUNNER_HOOK_JOB_COMPLETED {} {}'
+            .format(github_builder.job.job_id, github_builder.job.f_or_p),
+            '   EXIT_CODE=$?',
+            '   if [[ $EXIT_CODE != 0 ]]; then',
+            '       echo "" && echo "##[error]Process completed with exit code $EXIT_CODE."',
+            '       exit $EXIT_CODE',
+            '   fi',
+            '   set -o allexport',
+            '   source /etc/reproducer-environment',
+            '   set +o allexport',
+            'fi',
+            '',
+        ]
 
     lines += [
         '',
@@ -225,5 +357,5 @@ def run_with_envs(envs, command):
 
 
 def resolve_exprs(envs, value):
-    command = "echo {}".format(value)
+    command = 'echo {}'.format(value)
     return '$({})'.format(run_with_envs(envs, command))

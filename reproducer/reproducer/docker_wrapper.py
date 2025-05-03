@@ -1,3 +1,4 @@
+import ast
 import os
 import subprocess
 import time
@@ -5,12 +6,12 @@ import time
 import docker
 import docker.errors
 import requests
-import ast
 
 from bugswarm.common import log
+from bugswarm.common.json import write_json
 from bugswarm.common.shell_wrapper import ShellWrapper
 
-from reproducer.reproduce_exception import ReproduceError
+from reproducer.reproduce_exception import DockerError, ReproductionTimeout
 
 
 class DockerWrapper(object):
@@ -42,6 +43,7 @@ class DockerWrapper(object):
         abs_reproduce_tmp_dir = os.path.abspath(self.utils.get_reproduce_tmp_dir(job))
         abs_dockerfile_path = os.path.abspath(self.utils.get_dockerfile_path(job))
         reproduced_log_destination = self.utils.get_log_path(job)
+        job_info_destination = self.utils.get_reproduced_job_info_path(job)
 
         # Actually build the image now.
         image = self.build_image(path=abs_reproduce_tmp_dir, dockerfile=abs_dockerfile_path, full_image_name=image_name)
@@ -51,7 +53,7 @@ class DockerWrapper(object):
         retry_count = 0
         while True:
             try:
-                self.spawn_container(image, container_name, reproduced_log_destination)
+                self.spawn_container(image, container_name, reproduced_log_destination, job_info_destination)
             except requests.exceptions.ReadTimeout as e:
                 log.error('Error while attempting to spawn a container:', e)
                 log.info('Retrying to spawn container.')
@@ -74,9 +76,9 @@ class DockerWrapper(object):
                                              forcerm=True)
         except docker.errors.BuildError as e:
             log.debug(e)
-            raise ReproduceError('Encountered a build error while building a Docker image: {}'.format(e))
+            raise DockerError('Encountered a build error while building a Docker image: {!r}'.format(e))
         except docker.errors.APIError as e:
-            raise ReproduceError('Encountered a Docker API error while building a Docker image: {}'.format(e))
+            raise DockerError('Encountered a Docker API error while building a Docker image: {!r}'.format(e))
         except KeyboardInterrupt:
             log.error('Caught a KeyboardInterrupt while building a Docker image.')
         return image
@@ -91,13 +93,14 @@ class DockerWrapper(object):
             result = result.splitlines()
             result = result[-1]
             dictionary = ast.literal_eval(result)
-            if "error" in dictionary.keys():
+            if 'error' in dictionary.keys():
                 log.error('Error: ', dictionary.get('error'))
-            elif "status" in dictionary.keys():
+            elif 'status' in dictionary.keys():
                 log.info('Status: ', dictionary.get('status'))
 
-        except docker.errors.APIError:
-            raise ReproduceError('Encountered a Docker API error while pushing a Docker image to Docker Hub.')
+        except docker.errors.APIError as e:
+            raise DockerError('Encountered a Docker API error while pushing a Docker image to Docker Hub: '
+                              '{}'.format(e))
         except KeyboardInterrupt:
             log.error('Caught a KeyboardInterrupt while pushing a Docker image to Docker Hub.')
         # Push to Registry
@@ -112,57 +115,66 @@ class DockerWrapper(object):
             result = result.splitlines()
             result = result[-1]
             dictionary = ast.literal_eval(result)
-            if "error" in dictionary.keys():
+            if 'error' in dictionary.keys():
                 log.error('Error: ', dictionary.get('error'))
-            elif "status" in dictionary.keys():
+            elif 'status' in dictionary.keys():
                 log.info('Status: ', dictionary.get('status'))
 
-        except docker.errors.APIError:
-            raise ReproduceError('Encountered a Docker API error while pushing a Docker image to Docker Registry.')
+        except docker.errors.APIError as e:
+            raise DockerError('Encountered a Docker API error while pushing a Docker image to Docker Registry: '
+                              '{!r}'.format(e))
         except KeyboardInterrupt:
             log.error('Caught a KeyboardInterrupt while pushing a Docker image to Docker Registry.')
 
-    def spawn_container(self, image, container_name, reproduced_log_destination):
+    def spawn_container(self, image, container_name, reproduced_log_destination, job_info_destination):
         container_runtime = 0
         try:
-            # TODO: Find out why we use CPU_COUNT = 2?
-            # TODO: Find a good memory limit
             # TTY: https://github.com/actions/runner/issues/241
-            container = self.client.containers.run(image, detach=True, cpu_count=2, mem_limit='32g',
+            nano_cpu_share = int(self.utils.config.container_cpu_share * 1e9)
+            container = self.client.containers.run(image,
+                                                   detach=True,
+                                                   nano_cpus=nano_cpu_share,
+                                                   mem_limit=self.utils.config.container_mem_limit,
                                                    tty=False)  # privileged=True
         except docker.errors.ImageNotFound:
             log.error('Docker image not found.')
-            return 1
-        except docker.errors.APIError:
+            raise DockerError('Docker image {} not found'.format(image))
+        except docker.errors.APIError as e:
             log.error('Encountered a Docker API error while spawning a container.')
-            raise
+            raise DockerError('Encountered a Docker API error while spawning a container: {}'.format(e))
 
-        to_kill = False
-        while container.status != 'exited':
+        logs = None
+        try:
+            while container.status != 'exited':
+                container.reload()
+                container_runtime += 5
+                if container_runtime > 1800:
+                    log.error('Timed out after 30 minutes. Killing the container.')
+                    logs = container.logs()
+                    container.kill()
+                    raise ReproductionTimeout('Reproduce attempt timed out after 30m')
+                time.sleep(5)
+
+        finally:
             container.reload()
-            container_runtime += 5
-            if container_runtime > 1800:
-                to_kill = True
-                break
-            time.sleep(5)
+            if logs is None:
+                logs = container.logs()
+            with open(reproduced_log_destination, 'wb') as f:
+                f.write(logs)
 
-        logs = container.logs()
-        if to_kill:
-            log.error('Timed out after 30 minutes. Killing the container.')
-            container.kill()
+            job_info = {
+                'exit_code': container.attrs['State']['ExitCode'],
+            }
+            write_json(job_info_destination, job_info)
 
-        with open(reproduced_log_destination, 'wb') as f:
-            f.write(logs)
+            container.remove(force=True)
 
-        container.remove(force=True)
-        # TODO: Future improvement, delete job image after we finished a job.
-
-    def remove_image(self, image_name):
-        self.client.images.remove(image=image_name, force=True, noprune=True)
-        # NOTE: We cannot run prune at this step. It will cause race condition.
-        # Perhaps run this after we finished running all jobs?
-        # filters = {'dangling': True}
-        # self.client.images.prune(filters)
+    def remove_image(self, image_name, err_on_not_found=True):
+        try:
+            self.client.images.remove(image=image_name, force=True, noprune=False)
+        except docker.errors.ImageNotFound:
+            if err_on_not_found:
+                raise DockerError('Image {} not found'.format(image_name))
 
     def setup_docker_storage_path(self):
         try:
@@ -171,9 +183,9 @@ class DockerWrapper(object):
             storage_driver = docker_dict['Driver']
             path = os.path.join(docker_root_dir, storage_driver)
             return path
-        except docker.errors.APIError:
+        except docker.errors.APIError as e:
             log.error('Encountered a Docker API error while gathering the Docker environment info.')
-            raise
+            raise DockerError(e)
 
     @staticmethod
     def remove_image_in_shell(full_image_name):

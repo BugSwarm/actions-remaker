@@ -15,6 +15,7 @@ def gen_script(utils, job, dependence_solver):
     Invoke GitHub builder to generate the build script.
     """
     reproduce_tmp_dir = utils.get_reproduce_tmp_dir(job)
+    print(job)
     builder = GitHubBuilder(job, os.path.join(reproduce_tmp_dir, job.job_id), utils)
     builder.build()
 

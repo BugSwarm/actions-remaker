@@ -15,6 +15,8 @@ class Repo(object):
         self.queue = Queue()
 
     def add_buildpair_to_repo(self, repo: str, buildpair):
+        print("buildpair")
+        print(buildpair)
         buildpair_obj = BuildPair(repo, buildpair)
         self.buildpairs.append(buildpair_obj)
         return buildpair_obj

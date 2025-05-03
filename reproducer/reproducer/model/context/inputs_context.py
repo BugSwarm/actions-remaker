@@ -1,4 +1,3 @@
-import re
 from typing import Any, Tuple
 from .context import Context
 
@@ -31,4 +30,4 @@ class InputsContext(Context):
         # Otherwise, replace it with environment variable
         if '-' in key:
             return '$(printenv {})'.format(key), True
-        return '${{}}'.format(key), True
+        return '${{{}}}'.format(key), True

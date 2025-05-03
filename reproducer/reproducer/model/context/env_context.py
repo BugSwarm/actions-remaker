@@ -13,6 +13,7 @@ class EnvContext(Context):
         self.env = {}  # Environment variables that get overrided by $GITHUB_ENV.
         self.step_env = {}  # Environment variables that override $GITHUB_ENV.
         self.updating = False
+        self.case_sensitive = True  # ${{ env.* }} is the only context that's case sensitive.
 
     def update_env(self, workflow_env, job, parent_step, step, root_context):
         # Parent step: the step that triggered the composite action, None for non-composite action.
@@ -44,7 +45,7 @@ class EnvContext(Context):
             self.updating = False
 
     def get(self, path: str, err_if_not_present=False, make_string=False) -> Tuple[Any, bool]:
-        varname = path.upper().replace(' ', '_')
+        varname = path.replace(' ', '_')
         default_value, default_dyn = super().get(path, err_if_not_present, make_string)
 
         # Step envs override $GITHUB_ENV. See https://github.com/Robert-Furth/actions-test/actions/runs/3114758307.
@@ -53,8 +54,8 @@ class EnvContext(Context):
 
         # If the variable is in the ENVS dict set by parsing $GITHUB_ENV, use it. Otherwise, use the value from the
         # workflow file.
-        # CURRENT_ENV_MAP is a Bash associative array, where the keys are the variable names. If varname is in the array,
-        # use the corresponding value; otherwise use the static value
+        # CURRENT_ENV_MAP is a Bash associative array, where the keys are the variable names. If varname is in the
+        # array, use the corresponding value; otherwise use the static value
         return ('"$(test -v "CURRENT_ENV_MAP[{0}]" && echo "${{CURRENT_ENV_MAP[{0}]}}" || echo {1})"'.format(
                 varname, default_value), True)
 

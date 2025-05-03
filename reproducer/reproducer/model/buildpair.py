@@ -10,7 +10,8 @@ class BuildPair(object):
         # The repository slug for the project from which this build pair was mined.
         self.repo = repo
         self.branch = self.json_data['branch']
-
+        print("pppp")
+        print(self.json_data)
         self.pr_num = self.json_data['pr_num']
         self.failed_build = Build(self, self.json_data['failed_build'], is_failed=True)
         self.passed_build = Build(self, self.json_data['passed_build'], is_failed=False)
