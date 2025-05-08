@@ -13,8 +13,6 @@ class Build(object):
         self.commit_time = build_info['committed_at']
         self.is_failed = is_failed
         self.jobs = []
-        print("build_info")
-        print(build_info)
         for j in build_info['jobs']:
             # This is an edge case due to an implementation detail of the Travis API. Sometimes, the build_job format is
             # build_num.build_num.job_num in which case we change it to build_num.job_num.
@@ -23,8 +21,6 @@ class Build(object):
                 j['build_job'] = '.'.join([components[0], components[2]])
 
             config = j['config']
-            print("config")
-            print(config)
 
             # Create the Job object. If the reproduced result and analyzed result are already in the JSON file, which
             # means this job has been reproduced before, add those results to the Job object.
