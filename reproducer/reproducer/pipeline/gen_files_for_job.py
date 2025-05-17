@@ -32,8 +32,6 @@ def gen_files_for_job(job_dispatcher, job, copy_files=False, dependency_solver=F
     :param copy_files:
     :param build_path:
     """
-    print("job ")
-    print(job)
     with wrap_errors('Set up workspace dir'):
         job_dispatcher.utils.setup_jobpair_dir(job)
 
