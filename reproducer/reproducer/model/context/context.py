@@ -1,10 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import Any, Tuple
 
+from reproducer.reproduce_exception import ContextError
+
 from bugswarm.common import log
 
 
 class Context(ABC):
+    def __init__(self):
+        self.case_sensitive = False
 
     @abstractmethod
     def as_dict(self) -> dict:
@@ -24,6 +28,9 @@ class Context(ABC):
 
         try:
             for i, key in enumerate(parts):
+                if not self.case_sensitive:
+                    key = key.lower()
+
                 if isinstance(result, dict):
                     result = result[key]
                 elif isinstance(result, Context):
@@ -35,7 +42,7 @@ class Context(ABC):
         except KeyError as e:
             log.warning('Path "{}" not present in context'.format(path))
             if err_if_not_present:
-                raise e
+                raise ContextError(e.args) from e
             return '', False
 
         if make_string:

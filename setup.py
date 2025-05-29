@@ -16,7 +16,8 @@ setup(
         'PyYAML==5.4',
         'beautifulsoup4==4.8.2',
         'lxml==4.6.5',
-        'packaging==20.7',
+        'packaging==25.0',
+        'requests==2.31',
         'urllib3==1.26.5',
         "pyparsing==3.0.9"
     ],

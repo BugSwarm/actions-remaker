@@ -24,10 +24,9 @@ class PairCenter(JobCenter):
         self.skip_filtered = skip_filtered
         self.repos = {}
         self.uninitialized_repos = Queue()
-        self.queue = Queue()
+        self.queue = None
         self._load_jobs_from_pairs_for_repo(input_file)
         self.utils = utils
-        self.thread_workloads = None
         self.total_buildpairs = 0
         self.total_jobpairs = 0
 
@@ -104,12 +103,14 @@ class PairCenter(JobCenter):
             # TODO: Find out why we need to set image_tag here?
             # failed_job.image_tag = jp['failed_job']['heuristically_parsed_image_tag']
             # failed_job.image_tag = failed_job.config['runs-on']
+            failed_job.build_system = jp['build_system'].lower() if jp.get('build_system', 'NA') != 'NA' else None
 
             passed_job_id = jp['passed_job']['job_id']
             passed_job = [passed_job for passed_job in buildpair_obj.builds[1].jobs
                           if passed_job.job_id == str(passed_job_id)][0]
             # passed_job.image_tag = jp['passed_job']['heuristically_parsed_image_tag']
             # passed_job.image_tag = passed_job.config['runs-on']
+            passed_job.build_system = jp['build_system'].lower() if jp.get('build_system', 'NA') != 'NA' else None
 
             if 'match_history' in jp:
                 buildpair_obj.jobpairs.append(JobPair(repo,
@@ -257,32 +258,38 @@ class PairCenter(JobCenter):
                         remaining_jobpairs += 1
         return remaining_jobpairs
 
-    def init_queues_for_threads(self, threads_num, package_mode=False):
-        num_of_items_per_thread = int(self.get_num_remaining_items(package_mode) / threads_num)
-        self.thread_workloads = []
-        q = Queue()
+    def init_queue_for_threads(self, manager, package_mode=False):
+        # Because our job/jobpair models use shared objects (e.g. multiprocessing.Value), we can't
+        # put them in a shared queue; doing so causes a RuntimeError. Instead, we put the jobs/pairs
+        # in a (non-shared) list, and the index of each job in the shared queue.
+        self.queue = manager.Queue()
+        self.items = []
+
         if package_mode:
             for r in self.repos:
                 for bp in self.repos[r].buildpairs:
                     for jp in bp.jobpairs:
                         if not jp.reproduced.value:
-                            q.put(jp)
-                            if q.qsize() >= num_of_items_per_thread:
-                                self.thread_workloads.append(q)
-                                q = Queue()
+                            self.items.append(jp)
         else:
             for r in self.repos:
                 for bp in self.repos[r].buildpairs:
                     for jp in bp.jobpairs:
                         for j in jp.jobs:
                             if not j.reproduced.value and not j.skip.value and j.job_id != '0':
-                                q.put(j)
-                                if q.qsize() >= num_of_items_per_thread:
-                                    self.thread_workloads.append(q)
-                                    q = Queue()
-        log.info('Finished initializing queues for all threads.')
-        for i in range(len(self.thread_workloads)):
-            log.debug('tid =', i, ', qsize =', self.thread_workloads[i].qsize())
+                                self.items.append(j)
+
+        for i in range(len(self.items)):
+            self.queue.put_nowait(i)
+
+        log.info('Finished initializing job queue.')
+
+    def dequeue_item(self):
+        i = self.queue.get_nowait()
+        return self.items[i]
+
+    def item_queue_is_empty(self):
+        return self.queue.empty()
 
     def _init_queue_of_repos(self):
         for r in self.repos:

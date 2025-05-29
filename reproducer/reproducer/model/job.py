@@ -2,14 +2,16 @@ from multiprocessing import Value
 
 
 class Job(object):
-    def __init__(self, build, build_job, job_id, language, config, image_tag):
+    def __init__(self, build, build_job, job_id, language, config):
         self.build = build
         self.build_job = build_job
         self.job_id = str(job_id)
-        self.image_tag = image_tag
         self.language = language
         self.config = config
-        self.image_tag = image_tag
+
+        self.image_tag = None  # Docker image
+        self.runs_on = None  # Ubuntu version
+        self.container = None  # Container Docker image
 
         self.repo = build.buildpair.repo
         self.branch = build.buildpair.branch
@@ -18,7 +20,7 @@ class Job(object):
         self.travis_merge_sha = build.travis_merge_sha
         self.resettable = build.resettable
         self.github_archived = build.github_archived
-        self.is_failed = 'failed' if build.is_failed else 'passed'  # TODO: WHY NOT BOOLEAN???
+        self.f_or_p = 'failed' if build.is_failed else 'passed'
         if build.buildpair.pr_num != -1:
             self.is_pr = True
         else:
@@ -29,6 +31,7 @@ class Job(object):
         self.mismatch_attrs = []
         self.job_name = ''  # Initialized in pair center function.
 
+        self.build_system = None  # Used when analyzing results.
         self.reproduced_result = None
         self.orig_result = None
 

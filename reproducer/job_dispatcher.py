@@ -1,15 +1,13 @@
 import os
+import queue
 import time
-
-from multiprocessing import Lock
-from multiprocessing import Manager
-from multiprocessing import Process
-from multiprocessing import Value
+from multiprocessing import Lock, Manager, Process, Value
 from typing import Optional
+
+from termcolor import colored
 
 from bugswarm.common import log
 from bugswarm.common.json import read_json
-from termcolor import colored
 
 from reproducer.config import Config
 from reproducer.docker_wrapper import DockerWrapper
@@ -132,7 +130,6 @@ class JobDispatcher(object):
                         self._spawn(tid)
                     else:
                         self.threads[tid]['exit_reason'] = 'finished'
-                        self.terminate.value = 1
                         p.join()  # Allow cleanup.
 
             self.alive_threads = alive_threads
@@ -159,7 +156,7 @@ class JobDispatcher(object):
             log.info('No remaining items. Exiting.')
             return 0
         self.thread_num = min(self.thread_num, num_remaining_items)
-        self.job_center.init_queues_for_threads(self.thread_num, self.package_mode)
+        self.job_center.init_queue_for_threads(self.manager, self.package_mode)
         # Begin initializing threads.
         for tid in range(self.thread_num):
             self._spawn(tid)
@@ -172,20 +169,24 @@ class JobDispatcher(object):
         For each item, it calls self.process_item() to run.
         :param tid: Thread ID
         """
-        workload = self.job_center.thread_workloads[tid]
-        while not workload.empty():
+        while not self.job_center.item_queue_is_empty():
             # Break out of the loop if the terminate flag is set.
             if self.terminate.value:
                 return 0
-            item = workload.get()
+
+            try:
+                item = self.job_center.dequeue_item()
+            except queue.Empty:
+                # No items left to process -- exit the thread.
+                break
 
             # Intentionally catch ReproduceError but allow KeyboardInterrupt to propagate.
             try:
                 self.process_item(item, tid)
             except ReproduceError as e:
-                log.info(colored('[THREAD {}] {} {}'.format(tid, item, e), 'red'))
+                log.error(colored('[THREAD {}] {} {}'.format(tid, item, e), 'red'))
                 self.reproduce_err.value += 1
-                self.record_error_reason(item, str(e))
+                self.record_error_reason(item, e)
                 # Optionally handle failed reproducing here.
         log.info('[THREAD {}] Workload complete. Exiting thread.'.format(tid))
 

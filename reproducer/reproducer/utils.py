@@ -1,16 +1,17 @@
 import collections
 import os
+import pathlib
+import re
 import shlex
 import shutil
 import subprocess
 import time
-import json
-import re
 from typing import Optional
 
 from bugswarm.common import log
 from bugswarm.common import utils as bugswarmutils
 from bugswarm.common.shell_wrapper import ShellWrapper
+from reproducer.reproduce_exception import ReproduceError
 
 
 class Utils(object):
@@ -54,6 +55,9 @@ class Utils(object):
         log.debug(self.get_jobpair_dir(job))
         os.makedirs(self.get_jobpair_dir(job), exist_ok=True)
 
+    def setup_jobpair_workspace(self, jobpair):
+        os.makedirs(self.get_jobpair_workspace_dir(jobpair), exist_ok=True)
+
     # --------------------------------------------
     # ------ Subprocess helper functions ---------
     # --------------------------------------------
@@ -64,7 +68,7 @@ class Utils(object):
 
     @staticmethod
     def construct_github_archive_repo_sha_url(repo, sha):
-        return 'https://github.com/{}/archive/{}.zip'.format(repo, sha)
+        return 'https://github.com/{}/archive/{}.tar.gz'.format(repo, sha)
 
     def get_repo_storage_dir(self, job):
         return os.path.join(self.config.stored_repos_dir, job.repo)
@@ -121,6 +125,9 @@ class Utils(object):
     def check_if_dockerfile_exist(self, job):
         return os.path.isfile(self.get_dockerfile_path(job))
 
+    def check_if_reproduced_job_info_exist(self, job):
+        return os.path.isfile(self.get_reproduced_job_info_path(job))
+
     # --------------------------------------------
     # -------- Get path helper functions ---------
     # --------------------------------------------
@@ -140,6 +147,9 @@ class Utils(object):
     def get_reproducing_repo_dir(self, job):
         return os.path.join(self.config.workspace_dir, job.job_id, job.sha, job.repo)
 
+    def get_jobpair_workspace_dir(self, jobpair):
+        return os.path.join(self.config.workspace_dir, jobpair.jobpair_name)
+
     def get_reproduce_tmp_dir(self, job):
         return os.path.join(self.get_workspace_sha_dir(job), self.config.reproduce_tmp_dir)
 
@@ -148,11 +158,18 @@ class Utils(object):
         return '{}.log'.format(job.job_id)
 
     @staticmethod
+    def construct_job_info_name(job):
+        return '{}-info.json'.format(job.job_id)
+
+    @staticmethod
     def construct_patch_name(job):
         return '{}-pip-patch.json'.format(job.job_id)
 
     def get_log_path(self, job):
         return os.path.join(self.get_reproduce_tmp_dir(job), Utils.construct_log_name(job))
+
+    def get_reproduced_job_info_path(self, job):
+        return os.path.join(self.get_reproduce_tmp_dir(job), Utils.construct_job_info_name(job))
 
     def get_travis_build_log_path(self, job):
         filename = '{}-travis.log'.format(job.job_id)
@@ -162,14 +179,27 @@ class Utils(object):
         return os.path.join(self.get_stored_repo_path(job), 'repo.tar')
 
     def get_project_storage_repo_zip_path(self, job):
-        return os.path.join(self.get_stored_repo_archives_path(job), 'repo-' + job.sha + '.zip')
+        sha = job.travis_merge_sha if job.is_pr else job.sha
+        return os.path.join(self.get_stored_repo_archives_path(job), 'repo-' + sha + '.zip')
+
+    def get_project_storage_repo_archive_path(self, job):
+        sha = job.travis_merge_sha if job.is_pr else job.sha
+        return os.path.join(self.get_stored_repo_archives_path(job), 'repo-' + sha + '.tar.gz')
+
+    def get_job_archive_extracted_filename(self, job):
+        sha = job.travis_merge_sha if job.is_pr else job.sha
+        return '{}-{}'.format(job.repo.split('/')[1], sha)
 
     def get_repo_tar_path(self, job):
         return os.path.join(self.get_reproduce_tmp_dir(job), self.config.tarfile_name)
 
     def get_repo_tar_path_in_task(self, job):
-        filename = 'failed.tar' if job.is_failed == 'failed' else 'passed.tar'
+        filename = '{}.tar'.format(job.f_or_p)
         return os.path.join(self.get_tar_file_storage_dir_in_task(job), filename)
+
+    def get_repo_tar_path_in_pair_workspace(self, jobpair, job):
+        filename = '{}.tar'.format(job.f_or_p)
+        return os.path.join(self.get_jobpair_workspace_dir(jobpair), filename)
 
     def copy_repo_from_task_into_workspace(self, job):
         shutil.copy(self.get_repo_tar_path_in_task(job), self.get_repo_tar_path(job))
@@ -213,7 +243,7 @@ class Utils(object):
 
     def get_abs_jobpair_dockerfile_path(self, jobpair):
         dockerfile_name = '{}-Dockerfile'.format(jobpair.jobpair_name)
-        return os.path.abspath(os.path.join(self.get_jobpair_dir(jobpair.jobs[0]), dockerfile_name))
+        return os.path.abspath(os.path.join(self.get_jobpair_workspace_dir(jobpair), dockerfile_name))
 
     def get_orig_travis_log_path(self, job):
         filename = '{}-orig.log'.format(job.job_id)
@@ -221,7 +251,7 @@ class Utils(object):
 
     def get_jobpair_dir(self, job, run=None):
         if run:
-            task_dir = "{}_run{}".format(self.config.current_task_dir, run)
+            task_dir = '{}_run{}'.format(self.config.current_task_dir, run)
             return os.path.join(task_dir, job.buildpair_name, job.jobpair_name)
         else:
             return os.path.join(self.config.current_task_dir, job.buildpair_name, job.jobpair_name)
@@ -231,6 +261,9 @@ class Utils(object):
 
     def get_log_path_in_task(self, job, run=None):
         return os.path.join(self.get_jobpair_dir(job, run), Utils.construct_log_name(job))
+
+    def get_reproduced_job_info_path_in_task(self, job, run=None):
+        return os.path.join(self.get_jobpair_dir(job, run), Utils.construct_job_info_name(job))
 
     def get_patch_path_in_task(self, job, run=None):
         return os.path.join(self.get_jobpair_dir(job, run), Utils.construct_patch_name(job))
@@ -243,7 +276,7 @@ class Utils(object):
         return os.path.join(self.config.current_task_dir, job.buildpair_name, 'repo_tarfiles')
 
     def get_tar_file_in_jobpair_dir(self, job):
-        filename = 'failed.tar' if job.is_failed == 'failed' else 'passed.tar'
+        filename = '{}.tar'.format(job.f_or_p)
         return os.path.join(self.get_jobpair_dir(job), filename)
 
     def get_orig_log_path(self, job_id):
@@ -292,6 +325,9 @@ class Utils(object):
         os.makedirs(self.get_tar_file_storage_dir_in_task(job), exist_ok=True)
         shutil.copy(self.get_repo_tar_path(job), self.get_repo_tar_path_in_task(job))
 
+    def copy_reproduced_job_info_into_current_task_dir(self, job):
+        shutil.copy(self.get_reproduced_job_info_path(job), self.get_jobpair_dir(job))
+
     def copy_repo_tar_from_storage_into_jobpair_dir(self, job):
         shutil.copy(self.get_repo_tar_path_in_task(job), self.get_jobpair_dir(job))
 
@@ -307,6 +343,25 @@ class Utils(object):
     def copy_reproducing_repo_dir(self, job, dest):
         # Copy reproducing repo directory into dest, but ignore reproduce_tmp directory.
         shutil.copytree(self.get_reproducing_repo_dir(job), dest, ignore=shutil.ignore_patterns('reproduce_tmp'))
+
+    def move_build_dirs_into_pair_workspace_dir(self, jobpair):
+        for job in jobpair.jobs:
+            dest = os.path.join(self.get_jobpair_workspace_dir(jobpair), job.job_id)
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            shutil.move(self.get_build_dir_path(job), dest)
+
+    def move_dockerfiles_into_pair_workspace_dir(self, jobpair):
+        for job in jobpair.jobs:
+            shutil.move(self.get_dockerfile_path(job), self.get_jobpair_workspace_dir(jobpair))
+
+    def move_repo_tars_into_pair_workspace_dir(self, jobpair):
+        for job in jobpair.jobs:
+            shutil.move(self.get_repo_tar_path(job), self.get_repo_tar_path_in_pair_workspace(jobpair, job))
+
+    def copy_orig_logs_into_pair_workspace_dir(self, jobpair):
+        for job in jobpair.jobs:
+            shutil.copy(self.get_orig_log_path(job.job_id), self.get_jobpair_workspace_dir(jobpair))
 
     # --------------------------------------------
     # ---------- Other helper functions ----------
@@ -407,8 +462,23 @@ class Utils(object):
     def check_docker_disk_space_available(self, docker_storage_path):
         if self.config.skip_check_disk:
             return True
-        # TODO: Fix this
-        total_b, used_b, free_b = shutil.disk_usage('.')
+
+        # Start with the full storage path, and iterate up a directory if shutil.disk_usage raises a PermissionError
+        docker_storage_path = pathlib.Path(docker_storage_path)
+        for path in (docker_storage_path, *docker_storage_path.parents):
+            try:
+                total_b, used_b, free_b = shutil.disk_usage(str(path))
+                break
+            except PermissionError:
+                pass
+            except FileNotFoundError:
+                # We might be running in the spawner; check the normal disk space.
+                return self.check_disk_space_available()
+        else:
+            message = 'Could not get disk space for Docker storage path: {}'.format(docker_storage_path)
+            log.error(message)
+            raise ReproduceError(message)
+
         if free_b < self.config.docker_disk_space_requirement:
             amount = str(round(free_b / 1024**3, 2))
             log.warning('Inadequate disk space available for storing Docker Images: {} GiB.'.format(amount))
@@ -421,9 +491,13 @@ class Utils(object):
         ShellWrapper.run_commands(command, shell=True)
 
     def clean_workspace_job_dir(self, job):
-        log.info('cleaning workspace job directory.')
+        log.info('Cleaning workspace job directory.')
         command = 'rm -rf {}'.format(self.get_workspace_sha_dir(job))
         ShellWrapper.run_commands(command, shell=True)
+
+    def clean_workspace_jobpair_dir(self, jobpair):
+        log.info('Cleaning workspace jobpair directory.')
+        shutil.rmtree(self.get_jobpair_workspace_dir(jobpair), ignore_errors=True)
 
     def remove_workspace_dir(self):
         log.info('Removing workspace directory.')
@@ -437,6 +511,11 @@ class Utils(object):
 
     def clean_docker_disk_usage(self, docker):
         docker.remove_all_images()
+
+    @staticmethod
+    def remove_predefined_action_dir(builder_location, action_dir):
+        if os.path.exists(os.path.join(builder_location, 'actions', action_dir)):
+            shutil.rmtree(os.path.join(builder_location, 'actions', action_dir))
 
     @staticmethod
     def deep_copy(tags):
@@ -480,20 +559,6 @@ class Utils(object):
         return stdout
 
     @staticmethod
-    def replace_matrix(config: dict) -> dict:
-        if 'strategy' in config and 'matrix' in config['strategy']:
-            # replace matrix values
-            try:
-                string = json.dumps(config, skipkeys=True)
-                matrix = config['strategy']['matrix']
-                for matrix_key, matrix_val in matrix.items():
-                    string = re.sub(r'\${{{{ matrix.{} }}}}'.format(matrix_key), str(matrix_val), string)
-                return json.loads(string)
-            except json.JSONDecodeError:
-                log.error('Cannot replace matrix values.')
-        return config
-
-    @staticmethod
     def substitute_expressions(root_context, s: str, shell_quote=True) -> str:
         """
         Given a string, substitutes ${{ expressions }} with their corresponding values.
@@ -531,53 +596,6 @@ class Utils(object):
 
         return ''.join(parts)
 
-    @staticmethod
-    def get_bugswarm_image_tag(image_tag: str, use_default: bool) -> str:
-        bugswarm_image_tags = {
-            'ubuntu-22.04': 'bugswarm/githubactionsjobrunners:ubuntu-22.04-aug2022',
-            'ubuntu-20.04': 'bugswarm/githubactionsjobrunners:ubuntu-20.04',
-            'ubuntu-18.04': 'bugswarm/githubactionsjobrunners:ubuntu-18.04',
-        }
-        image_tag = image_tag.lower()
-
-        if image_tag in bugswarm_image_tags:
-            return bugswarm_image_tags[image_tag]
-
-        if use_default:
-            return bugswarm_image_tags['ubuntu-20.04']
-        else:
-            return ''
-
-    @staticmethod
-    def get_image_tag(config: Optional[dict]) -> str:
-        runs_on = config.get('runs-on', None)
-        container = config.get('container', None)
-        if runs_on:
-            # This will only handle very basic container image
-            # https://docs.github.com/en/actions/using-jobs/running-jobs-in-a-container
-            if isinstance(container, str) and container != '':
-                return container
-            if isinstance(container, dict) and 'image' in container and container['image'] != '':
-                return container['image']
-
-            if isinstance(runs_on, str):
-                return Utils.get_bugswarm_image_tag(runs_on, use_default=False)
-            if isinstance(runs_on, list):
-                for label in runs_on:
-                    bugswarm_image_tag = Utils.get_bugswarm_image_tag(label, use_default=False)
-                    if bugswarm_image_tag != '':
-                        return bugswarm_image_tag
-
-        return ''
-
-    def get_latest_image_tag(self, job_id) -> str:
-        # We will get the image tag from the original log.
-        actual_image_tag = self.get_job_image_from_original_log(job_id)
-        if not isinstance(actual_image_tag, str):
-            # Cannot find runner version from original log, use default instead.
-            actual_image_tag = ''
-        return Utils.get_bugswarm_image_tag(actual_image_tag, use_default=True)
-
     def get_sha_from_original_log(self, job):
         # Get all the actions/checkout SHA (except the first one)
         all_checkout_sha = []
@@ -596,10 +614,10 @@ class Utils(object):
                         if next_line_is_sha:
                             next_line_is_sha = False
                             is_checking_out = False
-                            sha = line[29:].rstrip('\n').strip('\'')
+                            sha = line[29:].rstrip('\n').strip("'")
                             if len(sha) == 40:
                                 all_checkout_sha.append(sha)
-                        elif is_checking_out and line[29:].startswith('[command]/usr/bin/git log -1 --format=\'%H\''):
+                        elif is_checking_out and line[29:].startswith("[command]/usr/bin/git log -1 --format='%H'"):
                             next_line_is_sha = True
                         elif line[29:].startswith('##[group]Run actions/checkout'):
                             is_checking_out = True
@@ -608,7 +626,7 @@ class Utils(object):
 
         if len(all_checkout_sha) > 0:
             if all_checkout_sha.pop(0) != job.sha:
-                log.warning('Job\'s SHA is not the first checkout sha (This is normal for PR job pair).')
+                log.warning("Job's SHA is not the first checkout sha (This is normal for PR job pair).")
         return all_checkout_sha
 
     def get_pr_from_original_log(self, job) -> Optional[str]:
@@ -654,3 +672,28 @@ class Utils(object):
             except FileNotFoundError:
                 pass
         return None
+
+    def get_predefined_actions_from_original_log(self, job) -> dict:
+        versions = {}
+        if os.path.isfile(self.get_orig_log_path(job.job_id)):
+            try:
+                with open(self.get_orig_log_path(job.job_id), 'r') as file:
+                    for i, line in enumerate(file):
+                        if len(line) <= 29:
+                            # Timestamp
+                            continue
+
+                        log_line = line[29:]
+                        match = re.search(r'^Download action repository \'(\S+)\' \(SHA:(\w+)\)', log_line, re.M)
+                        if match:
+                            repo_tag = match.group(1)
+                            sha = match.group(2)
+                            if repo_tag in versions:
+                                # Same repo and tag, should have the same SHA
+                                if versions.get(repo_tag, None) != sha:
+                                    log.error('Unable to retrieve the correct SHA for {}'.format(repo_tag))
+                                    continue
+                            versions[repo_tag] = sha
+            except FileNotFoundError:
+                pass
+        return versions

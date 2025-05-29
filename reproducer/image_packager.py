@@ -23,10 +23,12 @@ class ImagePackager(JobDispatcher):
     Subclass of JobDispatcher that packages Docker images for jobs.
     """
 
-    def __init__(self, input_file, task_name, threads, keep, package_mode, dependency_solver, skip_check_disk):
+    def __init__(self, input_file, task_name, threads, keep, package_mode,
+                 dependency_solver, skip_check_disk, push=True):
         super().__init__(input_file, task_name, threads, keep, package_mode, dependency_solver, skip_check_disk)
         self.jobpairs_packaged = Value('i', 0)
         self.dockerhub = DockerHub()
+        self.push = push
 
     def progress_str(self):
         return colored(
@@ -85,12 +87,21 @@ class ImagePackager(JobDispatcher):
     def _package_jobpair(self, jobpair, tid):
         log.info('[THREAD {}] Running {}'.format(tid, jobpair.full_name))
         start_time = time.time()
-        for j in jobpair.jobs:
-            self.utils.setup_jobpair_dir(j)
-            # We will skip this step if we already had the files in our output/tasks directory.
-            gen_files_for_job(self, j, True)
-        # Create and push a Docker image to Docker Hub.
-        package_jobpair_image(self.utils, self.docker, jobpair)
+
+        try:
+            for j in jobpair.jobs:
+                self.utils.setup_jobpair_dir(j)
+                # We will skip this step if we already had the files in our output/tasks directory.
+                gen_files_for_job(self, j)
+
+            # Create and push a Docker image to Docker Hub.
+            self.utils.setup_jobpair_workspace(jobpair)
+            package_jobpair_image(self.utils, self.docker, jobpair, copy_files=self.keep, push=self.push)
+        finally:
+            log.info('[THREAD {}] Cleaning workspace.'.format(tid))
+            for j in jobpair.jobs:
+                self.utils.clean_workspace_job_dir(j)
+            self.utils.clean_workspace_jobpair_dir(jobpair)
         elapsed = time.time() - start_time
         image_tag = self.utils.construct_jobpair_image_tag(jobpair)
         log.info(colored('[THREAD {}] Finished creating and pushing Docker image {} in {} seconds.'
@@ -98,8 +109,12 @@ class ImagePackager(JobDispatcher):
         self.jobpairs_packaged.value += 1
 
     def record_error_reason(self, item, message):
-        log.error('Encountered an error while creating an image and pushing it to Docker Hub:', message)
-        self.error_reasons[item.full_name] = message
+        self.error_reasons[item.full_name] = {
+            'category': type(message).__name__,
+            'category_long': message.CATEGORY,
+            'pipeline_stage': message.pipeline_stage,
+            'message': repr(message)
+        }
 
     def update_local_files(self):
         write_json(self.utils.get_error_reason_file_path(), Utils.deep_copy(self.error_reasons))
