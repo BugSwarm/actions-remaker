@@ -22,6 +22,7 @@ on:
 jobs:
   priv_to_pub:
     name: Sync private repo to public repo
+    if: github.repository == 'BugSwarm/actions-remaker-dev'
     runs-on: ubuntu-latest
 
     steps:
