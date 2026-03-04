@@ -1,20 +1,15 @@
 # == Rational ==
-# To enable development work in private repo, but at the same time open our work
-# in main branch to the public.
+# To enable development work in the private repo, but at the same time open our
+# work in the main branch to the public.
 #
 # == Description ==
-# Whenever a push event to main branch happens in this repo, this workflow syncs
-# main branches between the current repo and the corresponding public/private
-# repo, as defined by the job conditions.
+# Whenever a push to main happens in actions-remaker-dev, this workflow syncs
+# the main branch to the public actions-remaker repo.
 #
-# == Notes ==
-# Due to the limitation of expressions in GitHub Actions, we define two jobs
-# with `if` conditions such that only one will be executed during a given run,
-# depending on whether the current repo is private or public.
-#
-# A personal access token (ACTIONS_REMAKER_TOKEN) with Contents read/write
-# permission on both BugSwarm/actions-remaker-dev and BugSwarm/actions-remaker
-# must be stored as a secret in both repos.
+# == Requirements ==
+# A personal access token (ACTIONS_REMAKER_TOKEN) with Contents and Workflows
+# read/write permission on BugSwarm/actions-remaker must be stored as a secret
+# in this repository.
 
 
 name: Sync
@@ -27,28 +22,13 @@ on:
 jobs:
   priv_to_pub:
     name: Sync private repo to public repo
-    if: github.repository == 'BugSwarm/actions-remaker-dev'
     runs-on: ubuntu-latest
 
     steps:
       - name: Clone source repo (bare)
         run: git clone --bare https://x-access-token:${{ secrets.ACTIONS_REMAKER_TOKEN }}@github.com/BugSwarm/actions-remaker-dev.git repo
 
-      - name: Mirror push to public repo
+      - name: Push main branch to public repo
         run: |
           cd repo
-          git push --mirror https://x-access-token:${{ secrets.ACTIONS_REMAKER_TOKEN }}@github.com/BugSwarm/actions-remaker.git
-
-  pub_to_priv:
-    name: Sync public repo to private repo
-    if: github.repository == 'BugSwarm/actions-remaker'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Clone source repo (bare)
-        run: git clone --bare https://x-access-token:${{ secrets.ACTIONS_REMAKER_TOKEN }}@github.com/BugSwarm/actions-remaker.git repo
-
-      - name: Mirror push to private repo
-        run: |
-          cd repo
-          git push --mirror https://x-access-token:${{ secrets.ACTIONS_REMAKER_TOKEN }}@github.com/BugSwarm/actions-remaker-dev.git
+          git push https://x-access-token:${{ secrets.ACTIONS_REMAKER_TOKEN }}@github.com/BugSwarm/actions-remaker.git refs/heads/main:refs/heads/main
