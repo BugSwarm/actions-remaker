@@ -91,7 +91,6 @@ class GitHubBuilder:
 
         # Create build script for GitHub job
         if 'steps' not in self.job.config or not isinstance(self.job.config['steps'], list):
-            log.info(self.job.config)
             raise ReproduceError(
                 'Encountered an error while generating the build script: steps attribute is missing from config.')
 
